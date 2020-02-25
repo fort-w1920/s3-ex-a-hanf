@@ -4,30 +4,128 @@ Lesen Sie das [`S3`](https://adv-r.hadley.nz/s3.html) Kapitel von H. Wickham's *
 Bearbeiten Sie (mindestens) die folgenden von dort übernommenen/inspirierten Aufgaben:
 
 - Was tut die `as.data.frame.data.frame()` Methode? Warum ist das verwirrend? Wie können Sie derartige Verwirrung in Ihrem eigenen Code vermeiden?
+
+Aus der Doku: "Functions to check if an object is a data frame, or coerce it if possible" -> Diese Funktion wird aufgerufen, wenn man für ein `data.frame`-Objekt die Funktion `as.data.frame()` aufruft.
+Verwirrend:
+`data.frame` ist der Helper für Dataframes und nicht die `data()` Methode für die Klasse `frame`. Hier ist einfach die Benennung ungünstig. Besser: `data_frame()` oder `dataFrame()`
+Dasselbe trifft auf `as.data.frame` zu -> ist das die `as.data()` Methode der Klasse `frame` oder die `as()` Methode der Klasse `data.frame`? Besser: `as_data_frame()` => `as_data_frame.dataFrame()` wäre zum Beispiel eine besser lesbare Möglichkeit.
+
 - Beschreiben/erklären Sie das Verhalten dieses Codes:
-```r
+```{r, examplecode}
 set.seed(1014)
 some_days <- as.Date("2019-11-24") + sample(10, 5)
 mean(some_days)
-# [1] "2019-11-30"
 mean(unclass(some_days))
-# [1] 18230.4
 ```
+`some_days` ist ein Objekt der Klasse `date` (double-Vektor mit Klassenattribute `"Date"`). Die Klasse `Date` überschreibt die Methode `"+"`:
+```{r, plusdate}
+print(getS3method("+", "Date"))
+```
+Dadurch kann der gesampelte Vektor addiert werden (in diesem Fall erfolgt die Addition als double via `unclass`) und dann wieder als Datum konvertiert werden. Die Klasse `"Date"` implementiert auch eine Methode für `mean`:
+```{r, meandate}
+print(getS3method("mean", "Date"))
+```
+Es wird also wieder mit `unclass` auf die double-Werte zurückgegriffen und der Mean berechnet, anschließend dann als Date zurückkonvertiert. Beim Aufruf von `mean(unclass(some_days))` fehlt diese Konversion und man bekommt den double angezeigt. `.Date(mean(unclass(some_days)))` liefert dasselbe Ergebnis wie `mean(some_days)`.
+
 - Welche Klasse hat `x` im folgenden Code? Auf welchem *base type* basiert diese Klasse? Welche Attribute nutzt sie und wie sind die mathematischen Eigenschaften von Verteilungsfunktionen hier konkret implementiert? 
-```r
+```{r, ecdf}
 x <- ecdf(rpois(100, 10))
 x
-# Empirical CDF 
-# Call: ecdf(rpois(100, 10))
-#  x[1:15] =      1,      4,      5,  ...,     16,     17
 ```
+Klassen von x:
+```{r, findclasses}
+print(class(x))
+```
+Basistyp von x:
+```{r, findbasetype}
+print(typeof(x))
+```
+Attribute von x:
+```{r, findattributes}
+print(attributes(x))
+```
+Die mathematischen Eigenschaften sind im Konstruktor sichergestellt:
+```{r, ecdfconstructor}
+print(ecdf)
+```
+Für die Werte, die im übergebenen Vektor vorkommen, wird der Wert der empirischen Verteilungsfunktion berechnet. Zuerst werden die Werte im übergebenen Vektor sortiert. Tabulate zählt, wie oft ein Wert im Vektor vorkommt, cumsum nimmt dann die kumulative Summe -> noch durch die Anzahl an Beobachtungen teilen und fertig. Anschließend wird mit `approxfun` konstant interpoliert. Über approxfun werden auch die Werte links und rechts von den übergebenenen Beobachtungen fixiert (mit 0 für kleinere Werte und 1 für größere).
+
 - Schreiben Sie einen neuen low-level Konstruktor für `data.frame`-Objekte (ohne die Funktionen `as.data.frame()` oder `data.frame()` zu benutzen, selbstverständlich). Machen Sie sich zunächst klar: Auf welchem *base type* basiert `data.frame`? Welche Attribute nutzt `data.frame`? Welche Restriktionen gelten für die verschiedenen Einträge und Attribute?  
     *Hinweis*: Sehen Sie sich dafür zunächst mal so etwas wie `str(unclass(<irgend ein data.frame>))` an.
+    
+```{r, dataframe}
+check_datatype <- function(data) {
+  allowed_datatypes <- c("logical", "integer", "double", "complex", "character")
+  if (!(typeof(data) %in% allowed_datatypes)) {
+    stop(paste("Wrong input data type. Allowed types are: 
+               logical, integer, double, complex, character"))
+  }
+}
+
+name_df_column <- function(row.names, current_input, column="") {
+  if (!(is.null(row.names))) {
+     return(paste(row.names[current_input], column, sep = ""))
+  } 
+  return(paste("X", current_input, column, sep = ""))
+}
+
+new_data.frame <- function(..., row.names=NULL) {
+  input_data <- list(...)
+  num_inputs <- length(input_data)
+  result <- list()
+  num_cols <- 0
+  
+  for (current_input in seq_len(num_inputs)) {
+    current_data <- input_data[[current_input]]
+    current_datatype <- typeof(current_data)
+    check_datatype(current_datatype)
+    
+    
+    if (is.null(dim(current_data)) || dim(current_data)[[2]] == 1) {
+      # handle vector inputs
+      num_cols <- num_cols + 1
+      column_name <- name_df_column(row.names, current_input)
+      result[[column_name]] <- current_data
+    } else {
+      # matrix-like inputs are handled by iterating over the provided columns
+      num_cols <- num_cols + dim(current_data)[[2]]
+      for (column in seq_len(dim(current_data)[[2]])) {
+        column_name <- name_df_column(row.names, current_input, column)
+        result[[column_name]] <- current_data[, column]
+      }
+    }
+  }
+  
+  class(result) <- "data.frame"
+  
+  # set row names from argument or infer them
+  if (!is.null(row.names)) row.names(result) <- row.names
+  else row.names(result) <- seq_len(length(result[[1]]))
+  result
+} 
+
+str(unclass(data.frame(matrix(1, nrow = 2, ncol = 2))))
+str(unclass(new_data.frame(matrix(1, nrow = 2, ncol = 2))))
+str(unclass(data.frame(c(1,2,3,4,5))))
+str(unclass(new_data.frame(c(1,2,3,4,5))))
+```
 - Kategorisieren Sie die Klassen der Rückgabe-Objekte von `lm(), factor(), table(), as.Date(), as.POSIXct(), ecdf(), ordered(), I()` in die Klassentypen *vector class*, *record style class*, *scalar class* die in *Advanced R* beschrieben  werden.
+
+vector style class: `factor(), as.Date(), ordered()`
+
+record style class: `table(), as.POSIXct()`
+
+scalar class: `lm(), ecdf()`
+
+`I()` sollte den Klassentypen nicht ändern, da lediglich eine (sehr seltsame?!) Klasse zum Objekt hinzugefügt wird -> selber Klassentyp wie übergebenes Argument
+
 - Wie sähe ein Konstruktor `new_lm` für Objekte der Klasse `lm` aus? Warum wäre ein solcher Konstruktor vermutlich nicht besonders nützlich? 
+
+Ich verstehe die Frage nicht. Im Konstruktor muss geprüft werden, ob die übergebenen Argumente syntaktisch sinnvoll sind (`formula` ist eine Formel, `data` kann in einen Dataframe überführt werden usw.) und zusätzlich das Modell erstellt werden. Da passiert inhaltlich eine ganze Menge. Vielleicht verstehe ich falsch, was ein "solcher Konstruktor" ist?
+
 - Lesen Sie den Quellcode für `t()` und `t.test()`. Ist `t.test()` eine generische S3 Funktion oder eine S3 Methode? Was passiert im Detail wenn sie `t()` auf ein S3-Objekt mit Klasse `test` anwenden (s.u.)? Warum?
-```r
+```{r, ttest}
 x <- structure(1:10, class = "test")
 t(x)
 ```
-
+t.test ist eine generische S3 Funktion. Es wird `UseMethod` aufgerufen, um einen t-test für das jeweilige Objekt durchzuführen (es sind Methoden für `formula`-Objekte und den `default`-Fall implementiert). Beim Aufruf von `t(x)` startet der Method Dispatch in der generischen Funktion `t()` und sucht als erstes nach einer Funktion `t.test`, da die Klasse von `x` `test` ist. Diese wird gefunden (weil `t.test` furchtbar benannt wurde), somit führen wir den t-Test durch. Das ist sicher nicht so gedacht gewesen und wäre vermeidbar, wenn `t.test` einfach `t_test` heißen würde.
