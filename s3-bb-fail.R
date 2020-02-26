@@ -1,3 +1,5 @@
+source("s3-bb-starter.R")
+
 ## test data for which bb() should fail:
 fail_vec <- 1:8
 fail_matrix <- matrix(fail_vec, nrow = 2, ncol = 4)

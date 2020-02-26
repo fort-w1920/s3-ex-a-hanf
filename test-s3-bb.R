@@ -1,3 +1,5 @@
+source("s3-bb-starter.R")
+
 ## test data for bb():
 texttest <- "Bedeutet nach jedem Vokal oder Diphtong die Konsonanten..."
 test_vec <- strsplit(texttest, " ")[[1]]
